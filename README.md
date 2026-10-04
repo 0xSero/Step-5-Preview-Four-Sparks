@@ -20,42 +20,41 @@ The checkpoint is [`0xSero/Step-5-Preview-Spark`](https://huggingface.co/0xSero/
 - **Kept in BF16** (`model-0000N.safetensors`): embeddings, LM head, norms, router gate and bias, vision tower and
   projector, and the MTP draft layers.
 - The sparse-attention indexer weights are not shipped: attention runs dense.
-- Average bits per weight (experts / EXL3 body): `TODO(final)`. Total size ~245 GB (~222 GB EXL3 experts + body, ~23 GB
-  BF16 body files). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
+- Average bits per weight: routed experts **3.40 bpw** (K4 for layers 3-36, K3 for layers 37-90), EXL3 body K4. Total size
+  **290.5 GB** (248.6 GB EXL3 experts, 6.1 GB EXL3 body, 35.8 GB BF16 tensors including the BF16 body copy). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
 
-The server image is `ghcr.io/0xsero/step-5-preview-spark` (`@sha256:TODO`, `TODO(final)`). It is vLLM with the EXL3
+The server image is `ghcr.io/0xsero/step-5-preview-spark` (`@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e`, tag `s1`, built and attested by the local-ai-images GitHub workflow). It is vLLM with the EXL3
 MoE path, the B12X Spark kernels (including RoCEnante, an RDMA all-reduce for small messages) and a `step5` plugin
 that registers the model (text, vision, MTP drafter) and the `step5_exl3` quantization method. No
 `--trust-remote-code` is needed. The served model name is `step-5-preview-spark`.
 
 ## Measured
 
-Four DGX Spark (GB10), TP4 over RoCE, V1 model runner, hybrid body, MTP with 2 draft tokens, RoCEnante all-reduce,
+Four DGX Spark (GB10), TP4 over RoCE, V1 model runner, fp16 activations, hybrid body, MTP with 2 draft tokens, RoCEnante all-reduce,
 CUDA graphs `FULL_DECODE_ONLY`, 262,144 context. All decode runs used the server's default sampling and stopped
 naturally (no output caps).
 
-Rows marked *measured 2026-10-04, 4x DGX Spark TP4* are from the current build. They will be updated for the final
-release image and checkpoint (`TODO(final)`).
+All rows: final checkpoint, measured 2026-10-04 on 4x DGX Spark TP4 (image recipe identical to the published digest).
 
 | Metric | Result |
 |---|---|
-| Prefill, 8k prompt | 1,494 tok/s (measured 2026-10-04, 4x DGX Spark TP4) |
-| Prefill, 32k prompt | 1,409 tok/s (measured 2026-10-04, 4x DGX Spark TP4) |
-| Decode, 1 stream (prose and code) | 27.6-32.9 tok/s (measured 2026-10-04, 4x DGX Spark TP4) |
-| MTP acceptance (2 draft tokens) | per position 0.93 / 0.69 (measured 2026-10-04, 4x DGX Spark TP4) |
-| Decode, 4 streams | `TODO(measured)` tok/s aggregate |
-| KV cache pool | ~1.0M tokens at 262,144 context, 20 GB KV per rank (measured 2026-10-04, 4x DGX Spark TP4) |
-| Max context per request | 262,144 (configured); longest recall test passed: `TODO(measured)` |
-| Text, tool calls, reasoning, vision, video | text / tools / image / video PASS (`scripts/smoke.py`, measured 2026-10-04, 4x DGX Spark TP4) |
-| Load time | `TODO(measured)` first boot, `TODO(measured)` warm (kernel and compile caches present) |
+| Prefill, 8k prompt | 1,416 tok/s |
+| Prefill, 32k prompt | 1,335 tok/s |
+| Decode, 1 stream | prose 26.9-27.0 tok/s, code 28.8-29.8 tok/s |
+| MTP acceptance (2 draft tokens) | per position 0.976 / 0.802, mean accepted length 2.78 |
+| Decode, 4 streams | code 70.8 tok/s aggregate (18.8 per stream), prose 48.5 aggregate |
+| KV cache pool | 999,279 tokens at 262,144 context, 20 GB KV per rank |
+| Max context per request | 262,144 (configured); passphrase recall at 240,925 prompt tokens: PASS (293 s) |
+| Text, tool calls, reasoning, vision, video | text / tools / image / video PASS (`scripts/smoke.py`) |
+| Load time | ~12 min (661-838 s measured, page cache warm; first boot from cold disk is longer) |
 
 Quality: full-vocabulary token-wise KL divergence against the BF16 reference on a held-out panel of 64 windows x
-2,048 tokens (65,536 scored positions), 95% bootstrap confidence intervals. Measured 2026-10-04, 4x DGX Spark TP4,
-on the current build; will be updated for the final checkpoint (`TODO(final)`).
+2,048 tokens (65,536 scored positions), 95% bootstrap confidence intervals, measured on the final checkpoint and
+release configuration. Our target was top-1 >= 93% and mean KL ~0.07; this build does not reach it.
 
 | Panel | Mean KL (nats) | Top-1 agreement | dNLL vs BF16 |
 |---|---:|---:|---:|
-| held-out 64 x 2,048 | 0.156 (0.143-0.170) | 90.1% (89.2-90.8%) | +0.051 nats |
+| held-out 64 x 2,048 | 0.142 (0.131-0.155) | 90.5% (89.7-91.3%) | +0.046 nats |
 
 ## Hardware and requirements
 
@@ -97,13 +96,13 @@ export WORKERS="user@10.10.10.11 user@10.10.10.13 user@10.10.10.14"   # example:
 3. **Pull the image** on all nodes. `launch.sh` pulls it where missing; to do it ahead of time:
 
    ```bash
-   docker pull ghcr.io/0xsero/step-5-preview-spark@sha256:TODO
+   docker pull ghcr.io/0xsero/step-5-preview-spark@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e
    ```
 
 4. **Launch** all four ranks. The script detects each node's fabric interface and HCA order, checks the checkpoint
    on every node, writes an API key to `~/.step5-sparks/api_key`, starts a memory guard on every node, clears stale
    compile caches, starts ranks 1-3 on the workers and rank 0 here, and waits until the API answers (first boot
-   `TODO(measured)` min):
+   about 12 min):
 
    ```bash
    scripts/launch.sh            # also: scripts/launch.sh status | logs [r0|r1|r2|r3] | stop
@@ -147,7 +146,8 @@ The model entry: reasoning on, text + image input, 262,144 context, tools via th
 Pi thinking levels map to the chat template's `reasoning_effort` as minimal/low -> `low`, medium -> `medium`,
 high/xhigh/max -> `high`. The key is read from `$STEP5_API_KEY` at request time and is never written to Pi's config.
 
-Checked with Pi `TODO(measured)` against the served model: `TODO(measured)`.
+Checked with Pi 1.0.0 against the served model: a `pi -p` task (write a script, run it with bash, report the output)
+completed with both tool calls and the correct answer.
 
 ## Configuration
 
@@ -157,14 +157,15 @@ Checked with Pi `TODO(measured)` against the served model: `TODO(measured)`.
 |---|---|
 | Nodes | head + `WORKERS` (default layout: 4 Sparks); `TP` defaults to the node count, `PP` to 1, `TP*PP` must equal it |
 | Model runner | V1 (`VLLM_USE_V2_MODEL_RUNNER=0`; `V2_RUNNER=1` switches) |
+| Activations | `--dtype float16` (DTYPE): the reference implementation runs fp16; bf16 changes the selected experts for ~30% of tokens per MoE layer in an 8-layer comparison (fp16: 5-10%) |
 | Body format | `hybrid` (BODY_FORMAT -> `STEP5_BODY_FORMAT`): EXL3 body for decode, BF16 body files for prefill; `exl3` runs without the BF16 body files |
 | Speculative decoding | MTP (`{"method":"mtp","num_speculative_tokens":2}`), NSPEC=2; `NSPEC=0` turns it off |
 | All-reduce | RoCEnante on (ROCE=1): `VLLM_ENABLE_ROCE_ALLREDUCE=1`, all-reduce up to 2 MB, all-gather up to 16 MB, traffic class 106 (`B12X_ROCE_TRAFFIC_CLASS`, `NCCL_IB_TC`); larger messages and `ROCE=0` use NCCL over RoCE |
 | Shared experts | `VLLM_DISABLE_SHARED_EXPERTS_STREAM=1` (SHARED_STREAM_OFF), required, see Troubleshooting |
 | EXL3 GEMV | `EXL3_INT8_GEMV=1` (int8 activations + fp16 residual: about fp16 accuracy at close to int8 speed; mode 0 is exact but ~1.6x slower GEMV, mode 2 loses accuracy at 1-2 rows) |
-| KV cache | model dtype (BF16), `--kv-cache-memory-bytes 20000000000` per rank (KV_BYTES): ~1.0M-token pool |
-| Context / batch | `--max-model-len 262144` (MAX_LEN), `--max-num-seqs 4` (MAX_SEQS), `--max-num-batched-tokens 4096` (BATCH) `TODO(final)` |
-| GPU memory | `--gpu-memory-utilization 0.90` (GPU_UTIL) `TODO(final)` |
+| KV cache | model dtype (FP16), `--kv-cache-memory-bytes 20000000000` per rank (KV_BYTES): ~1.0M-token pool |
+| Context / batch | `--max-model-len 262144` (MAX_LEN), `--max-num-seqs 4` (MAX_SEQS), `--max-num-batched-tokens 4096` (BATCH) |
+| GPU memory | `--gpu-memory-utilization 0.85` (GPU_UTIL) |
 | CUDA graphs | `FULL_DECODE_ONLY` (GRAPH_MODE), capture sizes from MAX_SEQS x (NSPEC+1) (CAPS); `EAGER=1` disables graphs |
 | EXL3 prefill | batched expert prefill kernel on (EXL3_PREFILL=st, EXL3_PREFILL_MIN_ROWS=1) |
 | Multimodal | `--limit-mm-per-prompt {"image":4,"video":1}`; video frames sampled uniformly (vLLM default 32, VIDEO_FRAMES overrides) |

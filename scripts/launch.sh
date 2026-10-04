@@ -20,7 +20,7 @@
 #            WORKER_IPS WORKER_IFNAMES WORKER_HCAS  same per worker, space-separated in WORKERS order, '-' = auto.
 #                          A worker's IP defaults to the address in its ssh target when that is an IPv4.
 #            PORT (8000) MPORT (29665) IMG API_KEY_FILE MEMGUARD_GIB (1) SSH_OPTS
-#            KV_BYTES MAX_LEN MAX_SEQS BATCH GPU_UTIL NSPEC GRAPH_MODE CAPS EAGER=1 VIDEO_FRAMES
+#            DTYPE KV_BYTES MAX_LEN MAX_SEQS BATCH GPU_UTIL NSPEC GRAPH_MODE CAPS EAGER=1 VIDEO_FRAMES
 #            BODY_FORMAT (hybrid) ROCE (1) V2_RUNNER (0) SHARED_STREAM_OFF (1) EXL3_INT8_GEMV (1)
 #            EXTRA="..."      extra vLLM args (all ranks)      ENV_EXTRA="K=V K=V"  extra container env (all ranks)
 #            CLEAR_COMPILE_CACHE=1   clear the torch.compile cache on every node even if the config did not change
@@ -29,7 +29,7 @@
 # Never caps outputs; never touches GPU power or clocks.
 set -euo pipefail
 
-IMG=${IMG:-ghcr.io/0xsero/step-5-preview-spark@sha256:TODO}   # TODO(final): pin the published image digest
+IMG=${IMG:-ghcr.io/0xsero/step-5-preview-spark@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e}
 SERVED=step-5-preview-spark
 read -r -a WK <<<"${WORKERS:-}"
 N=$(( ${#WK[@]} + 1 ))
@@ -41,8 +41,9 @@ PORT=${PORT:-8000}; MPORT=${MPORT:-29665}; MEMGUARD_GIB=${MEMGUARD_GIB:-1}
 KV_BYTES=${KV_BYTES:-20000000000}      # KV cache bytes per rank (BF16 KV): ~1.0M-token pool at TP4
 MAX_LEN=${MAX_LEN:-262144}
 MAX_SEQS=${MAX_SEQS:-4}
-BATCH=${BATCH:-4096}                   # TODO(final): --max-num-batched-tokens (prefill chunk)
-GPU_UTIL=${GPU_UTIL:-0.90}             # TODO(final)
+BATCH=${BATCH:-4096}                   # --max-num-batched-tokens (prefill chunk)
+GPU_UTIL=${GPU_UTIL:-0.85}
+DTYPE=${DTYPE:-float16}                # activations; matches the reference implementation (see README)
 NSPEC=${NSPEC:-2}                      # MTP draft tokens (0 = speculative decoding off)
 GRAPH_MODE=${GRAPH_MODE:-FULL_DECODE_ONLY}
 BODY_FORMAT=${BODY_FORMAT:-hybrid}     # hybrid: EXL3 body for decode, BF16 body (body-bf16-*.safetensors) for prefill
@@ -50,7 +51,7 @@ ROCE=${ROCE:-1}                        # RoCEnante all-reduce / all-gather over 
 V2_RUNNER=${V2_RUNNER:-0}              # vLLM model runner: 0 = V1 (release), 1 = V2
 SHARED_STREAM_OFF=${SHARED_STREAM_OFF:-1}
 EXL3_INT8_GEMV=${EXL3_INT8_GEMV:-1}
-EXL3_PREFILL=${EXL3_PREFILL:-st}; EXL3_PREFILL_MIN_ROWS=${EXL3_PREFILL_MIN_ROWS:-1}   # TODO(final): bake into the image
+EXL3_PREFILL=${EXL3_PREFILL:-st}; EXL3_PREFILL_MIN_ROWS=${EXL3_PREFILL_MIN_ROWS:-1}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 SSH_OPTS=${SSH_OPTS:-}
@@ -198,7 +199,7 @@ dock() {  # $1 model dir word, $2 state dir word (already shell-quoted)
   echo "-d --gpus all --network host --ipc host --privileged --ulimit memlock=-1 --ulimit nofile=1048576:1048576" \
     "--shm-size 32g -v $1:/model:ro -v $2/cache:/cache"
 }
-ARGS=(/model --served-model-name "$SERVED" --tensor-parallel-size "$TP" --pipeline-parallel-size "$PP"
+ARGS=(/model --served-model-name "$SERVED" --dtype "$DTYPE" --tensor-parallel-size "$TP" --pipeline-parallel-size "$PP"
   --nnodes "$N" --master-addr "$HEAD_IP" --master-port "$MPORT"
   --kv-cache-memory-bytes "$KV_BYTES" --gpu-memory-utilization "$GPU_UTIL"
   --max-model-len "$MAX_LEN" --max-num-seqs "$MAX_SEQS" --max-num-batched-tokens "$BATCH"
@@ -269,6 +270,6 @@ while :; do
     echo "the other ranks are still running and holding memory: run scripts/launch.sh stop" >&2
     exit 1
   fi
-  [ $(( $(date +%s) - t0 )) -gt 2700 ] && { echo "not ready after 45 min; check scripts/launch.sh logs" >&2; exit 1; }   # TODO(final): set from measured load time
+  [ $(( $(date +%s) - t0 )) -gt 2700 ] && { echo "not ready after 45 min; check scripts/launch.sh logs" >&2; exit 1; }   # measured load ~12 min
   printf '.'; sleep 15
 done
