@@ -20,8 +20,8 @@ The checkpoint is [`0xSero/Step-5-Preview-Spark`](https://huggingface.co/0xSero/
 - **Kept in BF16** (`model-0000N.safetensors`): embeddings, LM head, norms, router gate and bias, vision tower and
   projector, and the MTP draft layers.
 - The sparse-attention indexer weights are not shipped: attention runs dense.
-- Average bits per weight: routed experts **3.40 bpw** (K4 for layers 3-36, K3 for layers 37-90), EXL3 body K4. Total size
-  **290.5 GB** (248.6 GB EXL3 experts, 6.1 GB EXL3 body, 35.8 GB BF16 tensors including the BF16 body copy). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
+- Bits per weight: routed experts **K4 everywhere (4.01 bpw)**; EXL3 body **K8** for decode. Total size **~342 GB**
+  (293.4 GB EXL3 experts, ~12.6 GB EXL3 body, 35.8 GB BF16 tensors including the BF16 body copy). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
 
 The server image is `ghcr.io/0xsero/step-5-preview-spark` (`@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e`, tag `s1`, built and attested by the local-ai-images GitHub workflow). It is vLLM with the EXL3
 MoE path, the B12X Spark kernels (including RoCEnante, an RDMA all-reduce for small messages) and a `step5` plugin
@@ -38,23 +38,25 @@ All rows: final checkpoint, measured 2026-10-04 on 4x DGX Spark TP4 (image recip
 
 | Metric | Result |
 |---|---|
-| Prefill, 8k prompt | 1,416 tok/s |
-| Prefill, 32k prompt | 1,335 tok/s |
-| Decode, 1 stream | prose 26.9-27.0 tok/s, code 28.8-29.8 tok/s |
-| MTP acceptance (2 draft tokens) | per position 0.976 / 0.802, mean accepted length 2.78 |
-| Decode, 4 streams | code 70.8 tok/s aggregate (18.8 per stream), prose 48.5 aggregate |
+| Prefill, 8k prompt | 1,353 tok/s |
+| Prefill, 32k prompt | 1,444 tok/s |
+| Decode, 1 stream | prose 26.2-29.5 tok/s, code 25.7-29.9 tok/s |
+| MTP acceptance (2 draft tokens) | per position 0.89 / 0.67, mean accepted length 2.56 |
+| Decode, 4 streams | code 66.5 tok/s aggregate (19.0 per stream), prose 40.3 aggregate |
 | KV cache pool | 999,279 tokens at 262,144 context, 20 GB KV per rank |
-| Max context per request | 262,144 (configured); passphrase recall at 240,925 prompt tokens: PASS (293 s) |
+| Max context per request | 262,144 (configured); passphrase recall at 240,925 prompt tokens: PASS (290 s) |
 | Text, tool calls, reasoning, vision, video | text / tools / image / video PASS (`scripts/smoke.py`) |
-| Load time | ~12 min (661-838 s measured, page cache warm; first boot from cold disk is longer) |
+| Load time | ~12-13 min (697-802 s measured, page cache warm; first boot from cold disk is longer) |
 
 Quality: full-vocabulary token-wise KL divergence against the BF16 reference on a held-out panel of 64 windows x
 2,048 tokens (65,536 scored positions), 95% bootstrap confidence intervals, measured on the final checkpoint and
-release configuration. Our target was top-1 >= 93% and mean KL ~0.07; this build does not reach it.
+release configuration, scored with the decode-path EXL3 body on every token. Target: top-1 >= 93% and mean KL ~0.07 (met).
+For scale: the unquantized model with only a different summation order already scores KL 0.027 / top-1 96.1% against
+this teacher (8 windows).
 
 | Panel | Mean KL (nats) | Top-1 agreement | dNLL vs BF16 |
 |---|---:|---:|---:|
-| held-out 64 x 2,048 | 0.142 (0.131-0.155) | 90.5% (89.7-91.3%) | +0.046 nats |
+| held-out 64 x 2,048 | 0.0735 (0.0674-0.0800) | 93.3% (92.8-93.8%) | +0.013 nats |
 
 ## Hardware and requirements
 
