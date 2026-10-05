@@ -38,8 +38,8 @@ All rows: final checkpoint, measured 2026-10-04 on 4x DGX Spark TP4 (image recip
 
 | Metric | Result |
 |---|---|
-| Prefill, 8k prompt | 1,353 tok/s |
-| Prefill, 32k prompt | 1,444 tok/s |
+| Prefill, 8k prompt | 1,527 tok/s (with `NCCL_PROTO=Simple`; 1,353 without) |
+| Prefill, 32k prompt | 1,445 tok/s |
 | Decode, 1 stream | prose 26.2-29.5 tok/s, code 25.7-29.9 tok/s |
 | MTP acceptance (2 draft tokens) | per position 0.89 / 0.67, mean accepted length 2.56 |
 | Decode, 4 streams | code 66.5 tok/s aggregate (19.0 per stream), prose 40.3 aggregate |
@@ -173,7 +173,7 @@ completed with both tool calls and the correct answer.
 | Multimodal | `--limit-mm-per-prompt {"image":4,"video":1}`; video frames sampled uniformly (vLLM default 32, VIDEO_FRAMES overrides) |
 | Parsers | `step3p5` reasoning and tool-call parsers, `--enable-auto-tool-choice` |
 | Sampling | `--generation-config vllm` (server defaults; clients set temperature etc.) |
-| Fabric | NCCL over RoCE (`NCCL_IB_HCA` per node, fabric NIC first; GID index 3), Gloo/NCCL sockets and `VLLM_HOST_IP` on the fabric IPs, `NCCL_RAS_ENABLE=0` |
+| Fabric | NCCL over RoCE (`NCCL_IB_HCA` per node, fabric NIC first; GID index 3), Gloo/NCCL sockets and `VLLM_HOST_IP` on the fabric IPs, `NCCL_RAS_ENABLE=0`, `NCCL_PROTO=Simple` (prefill all-reduces: +13 % prefill at 8k) |
 | Containers | `--ulimit nofile=1048576:1048576`, `--ulimit memlock=-1`, host network and IPC |
 | Host | `MALLOC_ARENA_MAX=2`, memory guard floor 1 GiB (MEMGUARD_GIB) |
 | Ports | API 8000 (PORT), rank rendezvous 29665 (MPORT) |
