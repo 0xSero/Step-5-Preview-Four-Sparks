@@ -34,23 +34,30 @@ Four DGX Spark (GB10), TP4 over RoCE, V1 model runner, fp16 activations, hybrid 
 CUDA graphs `FULL_DECODE_ONLY`, 262,144 context. All decode runs used the server's default sampling and stopped
 naturally (no output caps).
 
-All rows: final checkpoint, measured 2026-10-04 on 4x DGX Spark TP4 (image recipe identical to the published digest).
+Final checkpoint on 4x DGX Spark TP4 (image recipe identical to the published digest), measured 2026-10-04 to 2026-10-06.
+Speed varies between server launches of the same configuration (per-launch mean decode step ~75-81 vs ~90 ms observed)
+and with context length (~81 ms/step at 1-2k generated tokens, ~102 at 20-30k); ranges below span several launches.
 
 | Metric | Result |
 |---|---|
-| Prefill, 8k prompt | 1,527 tok/s (with `NCCL_PROTO=Simple`; 1,353 without) |
-| Prefill, 32k prompt | 1,445 tok/s |
-| Decode, 1 stream | prose 26.2-29.5 tok/s, code 25.7-29.9 tok/s |
+| Prefill, 8k prompt | cold first request 1,106-1,327 tok/s, warm 1,365-1,565 tok/s over 4 launches (`NCCL_PROTO=Simple`; one launch without it: 1,353) |
+| Prefill, 32k prompt | 1,445 tok/s (one launch) |
+| Decode, 1 stream | ~25-30 tok/s per stream (paired benchmark, several launches), short of the 75 tok/s target |
 | MTP acceptance (2 draft tokens) | per position 0.89 / 0.67, mean accepted length 2.56 |
 | Decode, 4 streams | code 66.5 tok/s aggregate (19.0 per stream), prose 40.3 aggregate |
 | KV cache pool | 999,279 tokens at 262,144 context, 20 GB KV per rank |
-| Max context per request | 262,144 (configured); passphrase recall at 240,925 prompt tokens: PASS (290 s) |
+| Max context per request | 262,144: a 261,632-token prompt + answer recalls the passphrase (PASS, 4 runs, ~320-340 s); a 262,145-token prompt is rejected (HTTP 400) |
 | Text, tool calls, reasoning, vision, video | text / tools / image / video PASS (`scripts/smoke.py`) |
 | Load time | ~12-13 min (697-802 s measured, page cache warm; first boot from cold disk is longer) |
 
 Quality: full-vocabulary token-wise KL divergence against the BF16 reference on a held-out panel of 64 windows x
 2,048 tokens (65,536 scored positions), 95% bootstrap confidence intervals, measured on the final checkpoint and
-release configuration, scored with the decode-path EXL3 body on every token. Target: top-1 >= 93% and mean KL ~0.07 (met).
+release configuration in the serving runtime with the decode-path EXL3 body on every token, captured in eager mode
+without MTP or CUDA graphs on prompt positions (closest offline match to serving, not the serving path itself). Target:
+top-1 >= 93% and mean KL ~0.07: point estimates meet it; the top-1 interval crosses 93%. Windows 0-7 of the panel were
+also used to choose between candidate builds; the 56 never-used windows give KL 0.0737 / top-1 93.38%. A serving-path
+cross-check (same checkpoint, 4x RTX PRO 6000, CUDA graphs + MTP, prompt positions through the BF16 prefill body) gives
+KL 0.0716 (0.0652-0.0788) / top-1 93.34%, consistent with the number below.
 For scale: the unquantized model with only a different summation order already scores KL 0.027 / top-1 96.1% against
 this teacher (8 windows).
 
