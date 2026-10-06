@@ -1,9 +1,11 @@
 #!/bin/bash
 # Install the Pi coding agent (if missing) and register the four-Spark Step-5-Preview server as a Pi provider.
 #
-#   pi/install.sh http://<head-spark-ip>:8000/v1
-#   export STEP5_API_KEY=...        # the key launch.sh wrote to ~/.step5-sparks/api_key on the head
-#   pi --model step5-sparks/step-5-preview-spark
+#   On the head:   pi/install.sh http://127.0.0.1:8000/v1
+#                  export STEP5_API_KEY=$(cat ~/.step5-sparks/api_key)     # written by scripts/launch.sh (STATE_DIR)
+#                  pi --model step5-sparks/step-5-preview-spark -p "What is 17 * 23?" < /dev/null
+#   Elsewhere:     pi/install.sh http://<head-ip>:8000/v1
+#                  export STEP5_API_KEY=$(ssh <head> cat ~/.step5-sparks/api_key)
 #
 # What it changes (existing config is kept; a timestamped backup is written before any edit):
 #   <pi dir>/models.json             adds or replaces only the "step5-sparks" provider
@@ -76,8 +78,10 @@ echo "$PI_DIR/extensions/step5-sparks.ts: installed"
 
 if [ -z "${!KEY_ENV:-}" ]; then
   echo
-  echo "Set the API key before starting Pi (copy it from the head Spark):"
-  echo "  export $KEY_ENV=\$(ssh <head-spark> cat ~/.step5-sparks/api_key)"
+  echo "Set the API key before starting Pi:"
+  echo "  export $KEY_ENV=\$(cat ~/.step5-sparks/api_key)              # on the head"
+  echo "  export $KEY_ENV=\$(ssh <head> cat ~/.step5-sparks/api_key)   # on another machine"
 fi
+echo "Check:  pi --model step5-sparks/step-5-preview-spark -p \"What is 17 * 23?\" < /dev/null"
 echo "Start:  pi --model step5-sparks/step-5-preview-spark"
 echo "Inside Pi: /model step5-sparks/step-5-preview-spark, /thinking to pick the reasoning level."

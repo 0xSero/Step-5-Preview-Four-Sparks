@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """Smoke checks for the 4x Spark Step-5 server: text answer, tool call, vision, video. Prints PASS/FAIL/SKIP per check.
 
-  python3 scripts/smoke.py [http://<head>:8000]
-API key: $STEP5_API_KEY, else the file $KEY_FILE (default ~/.step5-sparks/api_key, written by launch.sh).
+  python3 scripts/smoke.py [--key-file PATH] [--allow-skip] [http://<head>:8000]
+API key: $STEP5_API_KEY, else --key-file, else $KEY_FILE, else ~/.step5-sparks/api_key (written by launch.sh).
 
 No request carries max_tokens / max_completion_tokens: every answer stops naturally.
-The video check builds a 4 s MP4 (red, then blue) in memory with OpenCV (pip install opencv-python-headless numpy);
-without OpenCV it is skipped with a message and does not fail the run."""
-import base64, json, os, struct, sys, tempfile, urllib.request, zlib
+The video check builds a 4 s MP4 (red, then blue) in memory with OpenCV (pip install opencv-python-headless numpy;
+the server image has it). Without OpenCV the check is SKIP, and any SKIP makes the run exit 1 (the skipped checks are
+listed) unless --allow-skip is given. Exit 0 only when every check ran and passed."""
+import argparse, base64, json, os, struct, sys, tempfile, urllib.request, zlib
 
-URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
-KEY = os.environ.get("STEP5_API_KEY") or \
-    open(os.path.expanduser(os.environ.get("KEY_FILE", "~/.step5-sparks/api_key"))).read().strip()
+ap = argparse.ArgumentParser(description="Step-5 server smoke checks (text, tools, image, video).")
+ap.add_argument("url", nargs="?", default="http://127.0.0.1:8000")
+ap.add_argument("--key-file", default=os.environ.get("KEY_FILE", "~/.step5-sparks/api_key"),
+                help="API key file (default: $KEY_FILE or ~/.step5-sparks/api_key); ignored when STEP5_API_KEY is set")
+ap.add_argument("--allow-skip", action="store_true", help="exit 0 even if a check was skipped (e.g. no OpenCV)")
+A = ap.parse_args()
+URL = A.url.rstrip("/")
+if URL.endswith("/v1"):
+    URL = URL[:-3]
+KEY = os.environ.get("STEP5_API_KEY")
+if not KEY:
+    try:
+        KEY = open(os.path.expanduser(A.key_file)).read().strip()
+    except OSError as e:
+        sys.exit(f"no API key: set STEP5_API_KEY or point --key-file / KEY_FILE at launch.sh's api_key ({e})")
 
 
 def call(payload):
@@ -64,7 +77,7 @@ def ordered(txt, a, b):
     return a in txt and b in txt and txt.find(a) < txt.find(b)
 
 
-M = model(); ok = True
+M = model(); ok = True; skipped = []
 r = call({"model": M, "messages": [{"role": "user", "content": "What is 17 * 23? Answer with the number."}], "temperature": 0})
 txt = r["choices"][0]["message"]["content"] or ""
 print("text  ", "PASS" if "391" in txt else "FAIL", repr(txt[-120:]), r["usage"]); ok &= "391" in txt
@@ -87,7 +100,9 @@ print("vision", "PASS" if good else "FAIL", repr(txt[-160:]), r["usage"]); ok &=
 
 clip = mp4_red_then_blue()
 if clip is None:
-    print("video  SKIP (needs OpenCV + numpy to build the test clip: pip install opencv-python-headless numpy)")
+    print("video  SKIP (needs OpenCV + numpy to build the test clip: pip install opencv-python-headless numpy, "
+          "or run smoke.py inside the server image)")
+    skipped.append("video")
 else:
     vid = "data:video/mp4;base64," + base64.b64encode(clip).decode()
     r = call({"model": M, "temperature": 0, "messages": [{"role": "user", "content": [
@@ -97,4 +112,10 @@ else:
     txt = (r["choices"][0]["message"]["content"] or "").lower()
     good = ordered(txt, "red", "blue")
     print("video ", "PASS" if good else "FAIL", repr(txt[-160:]), r["usage"]); ok &= good
+if skipped:
+    print(f"SKIPPED: {', '.join(skipped)} -- " + ("not counted as failure (--allow-skip)" if A.allow_skip
+          else "the run is NOT a full pass; exit 1 (use --allow-skip to accept)"))
+    if not A.allow_skip:
+        ok = False
+print("ALL PASS" if ok and not skipped else "PASS (with skips)" if ok else "FAIL")
 sys.exit(0 if ok else 1)

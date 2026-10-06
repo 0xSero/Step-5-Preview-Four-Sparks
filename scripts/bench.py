@@ -106,8 +106,8 @@ def ctx(a, key, model, n):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
-    ap.add_argument("--key-file", default=os.path.expanduser("~/.step5-sparks/api_key"),
-                    help="ignored when STEP5_API_KEY is set")
+    ap.add_argument("--key-file", default=os.environ.get("KEY_FILE", "~/.step5-sparks/api_key"),
+                    help="API key file (default: $KEY_FILE or ~/.step5-sparks/api_key); ignored when STEP5_API_KEY is set")
     ap.add_argument("--out", required=True)
     ap.add_argument("--label", default="")
     ap.add_argument("--prefill", type=int, nargs="*", default=[8192, 32768])
@@ -118,7 +118,7 @@ def main():
     ap.add_argument("--dec-reps", type=int, default=2)
     ap.add_argument("--greedy", action="store_true", help="temperature 0 for chat requests")
     a = ap.parse_args()
-    key = os.environ.get("STEP5_API_KEY") or open(a.key_file).read().strip()
+    key = os.environ.get("STEP5_API_KEY") or open(os.path.expanduser(a.key_file)).read().strip()
     if a.greedy:
         SAMPLING["temperature"] = 0
     model = model_id(a.url, key)
