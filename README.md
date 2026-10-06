@@ -74,7 +74,7 @@ this teacher (8 windows).
   addresses in this README: head 10.10.10.12, workers 10.10.10.11, 10.10.10.13, 10.10.10.14).
 - Passwordless ssh from the head to every worker (key auth; use the workers' fabric addresses).
 - Docker with the NVIDIA runtime on all four nodes, your user in the `docker` group.
-- **~250 GB free NVMe on every node.** Each node holds the full ~245 GB checkpoint.
+- **~400 GB free NVMe on every node.** Each node holds the full checkpoint (341.4 GB = 318 GiB), plus headroom.
 - `python3`, `rsync`, `curl` on all nodes. Node.js + npm on whatever machine runs Pi.
 
 ## Quick start
@@ -86,7 +86,7 @@ git clone https://github.com/0xSero/Step-5-Preview-Four-Sparks && cd Step-5-Prev
 export WORKERS="user@10.10.10.11 user@10.10.10.13 user@10.10.10.14"   # example: the workers' fabric addresses
 ```
 
-1. **Download the weights** (~245 GB) to `~/models/Step-5-Preview-Spark`. The script resumes, then checks the
+1. **Download the weights** (341.4 GB) to `~/models/Step-5-Preview-Spark`. The script resumes, then checks the
    layout, the BF16 body files and every safetensors header (and sha256, if the repo carries `sha256-manifest.txt`;
    `SKIP_SHA=1` skips it):
 
@@ -226,7 +226,7 @@ view and the frame embeddings are concatenated, so video understanding is frame-
   launcher sets `VLLM_HOST_IP`, `NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME` and `NCCL_IB_HCA` per node. A worker's
   fabric IP is taken from its ssh target when that is an IPv4 address, otherwise detected; override with
   `WORKER_IPS` / `WORKER_IFNAMES`. It warns if a node's fabric IP is not in the head's /24.
-- **Disk space.** Every node needs the full ~245 GB checkpoint plus headroom: keep ~250 GB free per node.
+- **Disk space.** Every node needs the full 341.4 GB checkpoint plus headroom: keep ~400 GB free per node.
   `download.sh` and `copy-to-peers.sh` warn when there is less.
 - **Preflight fails with `no body-bf16-*.safetensors`**: the BF16 body files are missing (partial download or an
   older revision). Re-run `scripts/download.sh`, then `scripts/copy-to-peers.sh`. To serve without them, use
