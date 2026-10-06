@@ -20,8 +20,8 @@ The checkpoint is [`0xSero/Step-5-Preview-Spark`](https://huggingface.co/0xSero/
 - **Kept in BF16** (`model-0000N.safetensors`): embeddings, LM head, norms, router gate and bias, vision tower and
   projector, and the MTP draft layers.
 - The sparse-attention indexer weights are not shipped: attention runs dense.
-- Bits per weight: routed experts **K4 everywhere (4.01 bpw)**; EXL3 body **K8** for decode. Total size **~342 GB**
-  (293.4 GB EXL3 experts, ~12.6 GB EXL3 body, 35.8 GB BF16 tensors including the BF16 body copy). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
+- Bits per weight: routed experts **K4 everywhere (4.01 bpw)**; EXL3 body **K8** for decode. Total size **341.4 GB**
+  (318 GiB, 196 files: 293.4 GB EXL3 experts, ~12.6 GB EXL3 body, 35.8 GB BF16 tensors including the BF16 body copy). Files are at most ~5 GiB each, so nothing is split or needs reassembly.
 
 The server image is `ghcr.io/0xsero/step-5-preview-spark` (`@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e`, tag `s1`, built and attested by the local-ai-images GitHub workflow). It is vLLM with the EXL3
 MoE path, the B12X Spark kernels (including RoCEnante, an RDMA all-reduce for small messages) and a `step5` plugin
@@ -75,7 +75,16 @@ this teacher (8 windows).
 - Passwordless ssh from the head to every worker (key auth; use the workers' fabric addresses).
 - Docker with the NVIDIA runtime on all four nodes, your user in the `docker` group.
 - **~400 GB free NVMe on every node.** Each node holds the full checkpoint (341.4 GB = 318 GiB), plus headroom.
-- `python3`, `rsync`, `curl` on all nodes. Node.js + npm on whatever machine runs Pi.
+- `python3` with `venv` support, `rsync`, `curl` on all nodes. `scripts/download.sh` installs the Hugging Face CLI
+  into a private venv when `hf` is not on PATH, which needs the `python3-venv` package (not always installed on
+  DGX OS):
+
+  ```bash
+  sudo apt update && sudo apt install -y python3-venv rsync curl
+  ```
+
+- No Hugging Face token: the checkpoint repo is public. `HF_TOKEN` is optional; the `hf` CLI uses it if set.
+- Node.js + npm on whatever machine runs Pi (the head, in the quick start below).
 
 ## Quick start
 
@@ -86,15 +95,18 @@ git clone https://github.com/0xSero/Step-5-Preview-Four-Sparks && cd Step-5-Prev
 export WORKERS="user@10.10.10.11 user@10.10.10.13 user@10.10.10.14"   # example: the workers' fabric addresses
 ```
 
-1. **Download the weights** (341.4 GB) to `~/models/Step-5-Preview-Spark`. The script resumes, then checks the
-   layout, the BF16 body files and every safetensors header (and sha256, if the repo carries `sha256-manifest.txt`;
-   `SKIP_SHA=1` skips it):
+1. **Download the weights** (341.4 GB, no token needed) to `~/models/Step-5-Preview-Spark`. The script resumes,
+   then checks the layout, the BF16 body files, every safetensors header and the sha256 of every file against the
+   repo's `sha256-manifest.txt` (reads all 341.4 GB, takes a while). If the manifest is missing it prints
+   `no manifest: checksums NOT verified` and exits non-zero; `scripts/download.sh --no-verify` (or `SKIP_SHA=1`)
+   skips the sha256 pass and accepts the header/size checks only:
 
    ```bash
    scripts/download.sh
    ```
 
-2. **Copy to every worker** over the fabric and verify there (`PARALLEL=1` copies to all three at once):
+2. **Copy to every worker** over the fabric and verify there, sha256 included (`PARALLEL=1` copies to all three at
+   once; `--no-verify` as above):
 
    ```bash
    scripts/copy-to-peers.sh
@@ -117,11 +129,19 @@ export WORKERS="user@10.10.10.11 user@10.10.10.13 user@10.10.10.14"   # example:
    scripts/launch.sh            # also: scripts/launch.sh status | logs [r0|r1|r2|r3] | stop
    ```
 
-5. **Smoke test** (text, tool call, image, video; each prints PASS/FAIL, video prints SKIP without OpenCV):
+5. **Smoke test** (text, tool call, image, video; each prints PASS/FAIL, exit 0 only if all four ran and passed).
+   Run it inside the server image, which has OpenCV for the video check; the key is read from the mounted state dir:
 
    ```bash
-   python3 scripts/smoke.py http://127.0.0.1:8000
+   docker run --rm --network host --entrypoint python3 \
+     -v "$PWD/scripts:/s:ro" -v "$HOME/.step5-sparks:/k:ro" -e KEY_FILE=/k/api_key \
+     ghcr.io/0xsero/step-5-preview-spark@sha256:4e28f849a414a483b44be50a09198d76cbc859096b354796dc25ee2159e05a5e \
+     /s/smoke.py http://127.0.0.1:8000
    ```
+
+   With host Python instead: `python3 scripts/smoke.py http://127.0.0.1:8000`. The video check needs OpenCV
+   (`pip install opencv-python-headless numpy`, in a venv on DGX OS); without it video prints SKIP and the run
+   exits with status 1 unless `--allow-skip` is given.
 
 6. **Bench** (optional):
 
@@ -129,13 +149,18 @@ export WORKERS="user@10.10.10.11 user@10.10.10.13 user@10.10.10.14"   # example:
    python3 scripts/bench.py --out bench.json --conc 1 2 4
    ```
 
-7. **Connect Pi** (on any machine that can reach the head):
+7. **Connect Pi** (on the head; needs Node.js + npm). Install, load the key, then check with one non-interactive
+   request (`< /dev/null` keeps print mode from waiting on stdin):
 
    ```bash
-   pi/install.sh http://<head-ip>:8000/v1
-   export STEP5_API_KEY=$(ssh <head> cat ~/.step5-sparks/api_key)
-   pi --model step5-sparks/step-5-preview-spark
+   pi/install.sh http://127.0.0.1:8000/v1
+   export STEP5_API_KEY=$(cat ~/.step5-sparks/api_key)
+   pi --model step5-sparks/step-5-preview-spark -p "What is 17 * 23? Answer with the number." < /dev/null
    ```
+
+   Optional, interactive: `pi --model step5-sparks/step-5-preview-spark`. To use Pi from another machine instead,
+   run `pi/install.sh http://<head-ip>:8000/v1` there and
+   `export STEP5_API_KEY=$(ssh <head> cat ~/.step5-sparks/api_key)`.
 
 The endpoint is OpenAI-compatible: `http://<head-ip>:8000/v1`, model `step-5-preview-spark`, bearer auth with the
 key above. Images go in as `image_url` parts (up to 4 per prompt), video as one `video_url` part.
@@ -194,6 +219,17 @@ Paths: `MODEL_DIR` (default `~/models/Step-5-Preview-Spark`, same path under eac
 memory guard log). The checkpoint is mounted read-only at `/model` in every container (`st5-r0` on the head,
 `st5-r1`..`st5-r3` on the workers).
 
+API key: `launch.sh` writes it to `STATE_DIR/api_key` (`API_KEY_FILE` overrides). `smoke.py` and `bench.py` do not
+read `STATE_DIR`; they use `$STEP5_API_KEY` if set, else `--key-file PATH`, else `$KEY_FILE`, else
+`~/.step5-sparks/api_key`. With a different `STATE_DIR` (or `API_KEY_FILE`), point them at it:
+
+```bash
+KEY_FILE=$STATE_DIR/api_key python3 scripts/bench.py --out bench.json
+python3 scripts/smoke.py --key-file "$STATE_DIR/api_key" http://127.0.0.1:8000
+```
+
+and in the docker smoke command mount that directory instead: `-v "$STATE_DIR:/k:ro" -e KEY_FILE=/k/api_key`.
+
 Video: the checkpoint has no temporal module. Each sampled frame goes through the image encoder as one global
 view and the frame embeddings are concatenated, so video understanding is frame-by-frame.
 
@@ -227,7 +263,11 @@ view and the frame embeddings are concatenated, so video understanding is frame-
   fabric IP is taken from its ssh target when that is an IPv4 address, otherwise detected; override with
   `WORKER_IPS` / `WORKER_IFNAMES`. It warns if a node's fabric IP is not in the head's /24.
 - **Disk space.** Every node needs the full 341.4 GB checkpoint plus headroom: keep ~400 GB free per node.
-  `download.sh` and `copy-to-peers.sh` warn when there is less.
+  `download.sh` and `copy-to-peers.sh` warn when free plus already-downloaded space is under 400 GB (`NEED_GB`).
+- **`no manifest: checksums NOT verified`**: `sha256-manifest.txt` is not in the model directory, so the sha256 pass
+  could not run. Re-run `scripts/download.sh` to fetch it (it resumes; finished files are skipped). To proceed on
+  header/size checks only, pass `--no-verify` to `download.sh` / `copy-to-peers.sh`.
+- **`python3 -m venv failed`** in `download.sh`: `sudo apt install -y python3-venv`, then re-run.
 - **Preflight fails with `no body-bf16-*.safetensors`**: the BF16 body files are missing (partial download or an
   older revision). Re-run `scripts/download.sh`, then `scripts/copy-to-peers.sh`. To serve without them, use
   `BODY_FORMAT=exl3` (EXL3 body everywhere; lower prefill quality, not the release setting).
@@ -242,8 +282,9 @@ view and the frame embeddings are concatenated, so video understanding is frame-
 - **One rank exited**: `launch.sh` prints the logs and leaves the others running; run `scripts/launch.sh stop`
   before starting again.
 - **Debugging without CUDA graphs**: `EAGER=1 scripts/launch.sh` (slower decode, faster start).
-- **Video check skipped**: `smoke.py` builds its test clip with OpenCV; `pip install opencv-python-headless numpy`
-  on the machine running the smoke test. The server does not need it.
+- **Video check skipped** (smoke test exits 1): `smoke.py` builds its test clip with OpenCV. Run it inside the server
+  image (step 5), or `pip install opencv-python-headless numpy` for the Python running it; `--allow-skip` accepts
+  the skip. The server does not need OpenCV.
 - **Pi shows no model**: `STEP5_API_KEY` must be set in the shell that starts Pi; run `/model` to reload.
 - **`pi -p` hangs in a script**: print mode also reads stdin when it is not a terminal; add `< /dev/null`.
 
@@ -251,12 +292,12 @@ view and the frame embeddings are concatenated, so video understanding is frame-
 
 | Path | What it does |
 |---|---|
-| `scripts/download.sh` | HF download, then `verify.py` |
-| `scripts/verify.py` | checkpoint layout, BF16 body files, safetensors header/size and optional sha256 checks |
+| `scripts/download.sh` | HF download, then `verify.py` with the sha256 manifest (`--no-verify` skips sha256) |
+| `scripts/verify.py` | checkpoint layout, BF16 body files, safetensors header/size checks; `--sha` checks `sha256-manifest.txt` |
 | `scripts/copy-to-peers.sh` | rsync the checkpoint to every worker over the fabric, verify on each |
 | `scripts/launch.sh` | start / stop / status / logs for all ranks |
 | `scripts/memguard.sh` | host memory guard (started by `launch.sh` on every node) |
-| `scripts/smoke.py` | text, tool-call, image and video checks, no output caps |
+| `scripts/smoke.py` | text, tool-call, image and video checks, no output caps; a SKIP fails unless `--allow-skip` |
 | `scripts/bench.py` | prefill / decode / long-context speed bench, no output caps |
 | `pi/install.sh` | install Pi and register the provider |
 | `pi/models.fragment.json`, `pi/step5-sparks.ts` | Pi provider entry and request adapter |

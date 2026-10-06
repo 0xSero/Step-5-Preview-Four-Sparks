@@ -7,7 +7,7 @@
 # repo's sha256-manifest.txt (reads all 341.4 GB). If the manifest is missing the script prints
 # "no manifest: checksums NOT verified" and exits non-zero; --no-verify (or SKIP_SHA=1) skips the sha256 pass and
 # accepts header/size checks only.
-# Env: REVISION (pin a commit), HF_TOKEN (optional; only for a private fork or mirror), SKIP_SHA=1 (same as --no-verify),
+# Env: REVISION (pin a commit), HF_TOKEN (optional, not needed; hf uses it if set), SKIP_SHA=1 (same as --no-verify),
 #      BODY_FORMAT (hybrid; what verify.py requires: hybrid/bf16 need the body-bf16-*.safetensors files),
 #      NEED_GB (400: free-space warning threshold, checkpoint plus headroom).
 # Safe to re-run: hf download resumes and skips finished files. No file is split, so there is nothing to reassemble.
