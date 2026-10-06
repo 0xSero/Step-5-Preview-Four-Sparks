@@ -14,7 +14,9 @@ Checks:
     exl3/body/LNN.safetensors for every layer in quantization_config.body_layers
   - tokenizer files and chat_template.jinja are present
   - every .safetensors file has a parseable header and the size its header implies (catches truncated downloads)
-  - with --sha and a sha256-manifest.txt in the repo: sha256 of every listed file (slow: reads ~245 GB)
+  - with --sha: sha256 of every file listed in sha256-manifest.txt (slow: reads all 341.4 GB). Without the manifest
+    this is a failure ("no manifest: checksums NOT verified"); download.sh / copy-to-peers.sh accept that only with
+    --no-verify, which drops --sha. Without --sha the sha256 pass does not run.
 Exit code 0 when everything passes; prints one line per problem otherwise.
 """
 import hashlib, json, os, struct, sys
@@ -35,6 +37,8 @@ if len(args) != 1 or BODY_FORMAT not in ("hybrid", "bf16", "exl3", "fp8"):
     sys.exit(__doc__)
 D = os.path.abspath(os.path.expanduser(args[0]))
 bad = []
+NO_MANIFEST = "no manifest: checksums NOT verified (sha256-manifest.txt is missing here; re-run scripts/download.sh " \
+    "to fetch it, or pass --no-verify to download.sh / copy-to-peers.sh to accept header/size checks only)"
 
 
 def p(*parts):
@@ -114,8 +118,9 @@ for rel in expected:
 if SHA:
     man = p("sha256-manifest.txt")
     if not os.path.exists(man):
-        print("note: no sha256-manifest.txt in this checkpoint; skipped the sha256 pass (header/size checks still ran)")
+        bad.append(NO_MANIFEST)
     else:
+        n_sha = 0
         for line in open(man):
             if not line.strip():
                 continue
@@ -126,8 +131,12 @@ if SHA:
             with open(p(rel), "rb") as fh:
                 for blk in iter(lambda: fh.read(64 * 2**20), b""):
                     h.update(blk)
+            n_sha += 1
             if h.hexdigest() != want:
                 bad.append(f"sha256 mismatch: {rel}")
+        if n_sha == 0:
+            bad.append("sha256-manifest.txt lists no files: checksums NOT verified")
+        print(f"sha256: {n_sha} files checked against sha256-manifest.txt")
 
 for b in bad:
     print("FAIL", b)
