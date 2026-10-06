@@ -54,7 +54,8 @@ Quality: full-vocabulary token-wise KL divergence against the BF16 reference on 
 2,048 tokens (65,536 scored positions), 95% bootstrap confidence intervals, measured on the final checkpoint and
 release configuration in the serving runtime with the decode-path EXL3 body on every token, captured in eager mode
 without MTP or CUDA graphs on prompt positions (closest offline match to serving, not the serving path itself). Target:
-top-1 >= 93% and mean KL ~0.07: point estimates meet it; the top-1 interval crosses 93%. Windows 0-7 of the panel were
+top-1 >= 93% and mean KL ~0.07: the point estimates meet it, but top-1 is not met with 95% confidence (interval
+lower bound 92.75%, below 93%). Windows 0-7 of the panel were
 also used to choose between candidate builds; the 56 never-used windows give KL 0.0737 / top-1 93.38%. A serving-path
 cross-check (same checkpoint, 4x RTX PRO 6000, CUDA graphs + MTP, prompt positions through the BF16 prefill body) gives
 KL 0.0716 (0.0652-0.0788) / top-1 93.34%, consistent with the number below.
